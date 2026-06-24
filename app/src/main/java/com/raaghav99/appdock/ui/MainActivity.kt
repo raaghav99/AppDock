@@ -2,6 +2,8 @@ package com.raaghav99.appdock.ui
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,14 +30,16 @@ import com.raaghav99.appdock.data.AppDockDatabase
 import com.raaghav99.appdock.model.AppEntry
 import com.raaghav99.appdock.service.AppDockService
 import com.raaghav99.appdock.service.ApkBackupHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+data class InstalledApp(val name: String, val packageName: String, val sizeMb: Long)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Start session service
         startService(Intent(this, AppDockService::class.java))
-
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 AppDockScreen(context = this)
@@ -64,9 +69,7 @@ fun AppDockScreen(context: Context) {
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1A1A2E)
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1A1A2E))
             )
         },
         floatingActionButton = {
@@ -80,18 +83,11 @@ fun AppDockScreen(context: Context) {
         containerColor = Color(0xFF16213E)
     ) { padding ->
         if (apps.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Vault is empty", color = Color.Gray, fontSize = 18.sp)
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Tap + to add apps",
-                        color = Color.DarkGray,
-                        fontSize = 14.sp
-                    )
+                    Text("Tap + to add apps", color = Color.DarkGray, fontSize = 14.sp)
                 }
             }
         } else {
@@ -101,12 +97,7 @@ fun AppDockScreen(context: Context) {
                 contentPadding = PaddingValues(vertical = 12.dp)
             ) {
                 items(apps, key = { it.packageName }) { app ->
-                    AppCard(
-                        app = app,
-                        onLaunch = {
-                            AppDockService.launch(context, app.packageName)
-                        }
-                    )
+                    AppCard(app = app, onLaunch = { AppDockService.launch(context, app.packageName) })
                 }
             }
         }
@@ -116,9 +107,7 @@ fun AppDockScreen(context: Context) {
                 context = context,
                 onDismiss = { showAddDialog = false },
                 onAdd = { pkg ->
-                    scope.launch {
-                        ApkBackupHelper.addToVault(context, pkg)
-                    }
+                    scope.launch { ApkBackupHelper.addToVault(context, pkg) }
                     showAddDialog = false
                 }
             )
@@ -135,85 +124,111 @@ fun AppCard(app: AppEntry, onLaunch: () -> Unit) {
             containerColor = if (app.isActive) Color(0xFF0F3460) else Color(0xFF1A1A2E)
         )
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    app.appName,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    fontSize = 16.sp
-                )
+                Text(app.appName, fontWeight = FontWeight.SemiBold, color = Color.White, fontSize = 16.sp)
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    "${app.apkSizeBytes / 1_000_000} MB · ${app.packageName}",
-                    color = Color.Gray,
-                    fontSize = 12.sp
-                )
+                Text("${app.apkSizeBytes / 1_000_000} MB", color = Color.Gray, fontSize = 12.sp)
                 if (app.isActive) {
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        "● ACTIVE",
-                        color = Color(0xFF4CAF50),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("● ACTIVE", color = Color(0xFF4CAF50), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
-
             if (!app.isActive) {
                 IconButton(
                     onClick = onLaunch,
-                    modifier = Modifier
-                        .background(Color(0xFF0F3460), RoundedCornerShape(8.dp))
-                        .size(40.dp)
+                    modifier = Modifier.background(Color(0xFF0F3460), RoundedCornerShape(8.dp)).size(40.dp)
                 ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Launch",
-                        tint = Color.White
-                    )
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Launch", tint = Color.White)
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddAppDialog(context: Context, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
-    var pkgInput by remember { mutableStateOf("") }
+    var search by remember { mutableStateOf("") }
+    var installedApps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+
+    // Load installed user apps on open
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val pm = context.packageManager
+            val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            val userApps = packages
+                .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 } // user apps only
+                .map { info ->
+                    val name = pm.getApplicationLabel(info).toString()
+                    val apkSize = try {
+                        java.io.File(info.sourceDir).length() / 1_000_000
+                    } catch (e: Exception) { 0L }
+                    InstalledApp(name, info.packageName, apkSize)
+                }
+                .sortedBy { it.name }
+            installedApps = userApps
+            loading = false
+        }
+    }
+
+    val filtered = remember(search, installedApps) {
+        if (search.isBlank()) installedApps
+        else installedApps.filter {
+            it.name.contains(search, ignoreCase = true) ||
+            it.packageName.contains(search, ignoreCase = true)
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add App to Vault") },
         text = {
-            Column {
-                Text(
-                    "Enter the package name of an installed app to back it up.\nExample: com.instagram.android",
-                    fontSize = 13.sp,
-                    color = Color.Gray
-                )
-                Spacer(Modifier.height(12.dp))
+            Column(modifier = Modifier.height(480.dp)) {
                 OutlinedTextField(
-                    value = pkgInput,
-                    onValueChange = { pkgInput = it },
-                    label = { Text("Package name") },
-                    placeholder = { Text("com.example.app") },
+                    value = search,
+                    onValueChange = { search = it },
+                    placeholder = { Text("Search apps...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(8.dp))
+
+                if (loading) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(filtered, key = { it.packageName }) { app ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onAdd(app.packageName) }
+                                    .background(Color(0xFF1A1A2E), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(app.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    Text("${app.sizeMb} MB", color = Color.Gray, fontSize = 11.sp)
+                                }
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = "Add",
+                                    tint = Color(0xFF4CAF50),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         },
-        confirmButton = {
-            Button(
-                onClick = { if (pkgInput.isNotBlank()) onAdd(pkgInput.trim()) },
-                enabled = pkgInput.isNotBlank()
-            ) {
-                Text("Add to Vault")
-            }
-        },
+        confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
