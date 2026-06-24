@@ -91,7 +91,9 @@ class AppDockService : Service() {
         sessionApps.forEach { pkg ->
             try {
                 if (isDeviceOwner()) {
-                    dpm.uninstallPackage(adminComponent, pkg)
+                    val intent = Intent(this@AppDockService, AppDockService::class.java)
+                    val pi = PendingIntent.getService(this@AppDockService, pkg.hashCode(), intent, PendingIntent.FLAG_MUTABLE)
+                    packageManager.packageInstaller.uninstall(pkg, pi.intentSender)
                 }
                 db.appDao().setActive(pkg, false)
                 Log.d(TAG, "Uninstalled $pkg")

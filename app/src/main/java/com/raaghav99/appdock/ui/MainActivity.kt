@@ -183,7 +183,7 @@ fun AppCard(app: AppEntry, onLaunch: () -> Unit) {
 
 @Composable
 fun AddAppDialog(context: Context, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
-    var packageName by remember { mutableStateOf("") }
+    var pkgInput by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -197,8 +197,8 @@ fun AddAppDialog(context: Context, onDismiss: () -> Unit, onAdd: (String) -> Uni
                 )
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
-                    value = packageName,
-                    onValueChange = { packageName = it },
+                    value = pkgInput,
+                    onValueChange = { pkgInput = it },
                     label = { Text("Package name") },
                     placeholder = { Text("com.example.app") },
                     singleLine = true,
@@ -208,8 +208,8 @@ fun AddAppDialog(context: Context, onDismiss: () -> Unit, onAdd: (String) -> Uni
         },
         confirmButton = {
             Button(
-                onClick = { if (packageName.isNotBlank()) onAdd(packageName.trim()) },
-                enabled = packageName.isNotBlank()
+                onClick = { if (pkgInput.isNotBlank()) onAdd(pkgInput.trim()) },
+                enabled = pkgInput.isNotBlank()
             ) {
                 Text("Add to Vault")
             }
